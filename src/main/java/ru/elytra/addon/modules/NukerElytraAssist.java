@@ -169,9 +169,16 @@ public class NukerElytraAssist extends Module {
         .build()
     );
 
+    private final Setting<Boolean> debug = sgDebug.add(new BoolSetting.Builder()
+        .name("debug")
+        .description("Log every pipeline decision and state transition so issues are easy to spot.")
+        .defaultValue(true)
+        .build()
+    );
+
     private final Setting<Boolean> debugTrace = sgDebug.add(new BoolSetting.Builder()
         .name("debug-trace")
-        .description("Trace every state transition and movement snapshot to the log.")
+        .description("Trace every state transition and movement snapshot to the log (very verbose).")
         .defaultValue(false)
         .build()
     );
@@ -189,6 +196,7 @@ public class NukerElytraAssist extends Module {
 
     public NukerElytraAssist() {
         super(ElytraAddon.CATEGORY, "nuker-elytra-assist", "Runs a short two-vector elytra flight cycle after a confirmed block break under the player while KekNuker is active.");
+        detector.setLogger(this::detectorLog);
         this.controller = new FlightController(
             this::gateCheck,
             new Motion() {
@@ -209,7 +217,8 @@ public class NukerElytraAssist extends Module {
             },
             this::targetFinder,
             this::traceSink,
-            this::boostAtVector1Start
+            this::boostAtVector1Start,
+            this::pipelineLog
         );
     }
 
@@ -219,6 +228,12 @@ public class NukerElytraAssist extends Module {
             info("KekNuker module found: %s", musheorBridge.resolvedName());
         } else {
             warning("KekNuker module not found. kek-like=%s nuker-like=%s", moduleBridge.listModulesMatching("kek"), moduleBridge.listModulesMatching("nuker"));
+        }
+        if (debug.get()) {
+            info("settings: scanUp=%d scanDown=%d scanRadius=%d safeFall=%d offset=%d v1Ticks=%d v2Ticks=%d speed=%.2f maxCycle=%d firework=%s",
+                scanUpDistance.get(), scanDownDistance.get(), scanRadius.get(), safeFallDistance.get(),
+                targetHeightOffset.get(), vector1Ticks.get(), vector2Ticks.get(), vectorSpeedLimit.get(),
+                maxCycleTicks.get(), fireworkBoost.get());
         }
         controller.reset();
     }
@@ -277,11 +292,6 @@ public class NukerElytraAssist extends Module {
         if (observation.isEmpty()) return;
 
         controller.observe(observation.get());
-
-        if (debugTrace.get()) {
-            BreakObservation o = observation.get();
-            info("Confirmed break at (%d, %d, %d), source=%s", o.pos().x(), o.pos().y(), o.pos().z(), o.source());
-        }
     }
 
     @EventHandler
@@ -308,9 +318,13 @@ public class NukerElytraAssist extends Module {
     private Optional<AbortReason> gateCheck() {
         if (mc.player == null || mc.world == null) return Optional.of(AbortReason.MODULE_DISABLED);
         if (triggerOnlyWhenKekNukerActive.get() && !musheorBridge.kekNukerActive()) {
+            if (debug.get()) info("gate reject MODULE_DISABLED: KekNuker is not active");
             return Optional.of(AbortReason.MODULE_DISABLED);
         }
-        if (!mc.player.isGliding() || !hasElytra()) {
+        boolean gliding = mc.player.isGliding();
+        boolean elytra = hasElytra();
+        if (!gliding || !elytra) {
+            if (debug.get()) info("gate reject NO_ELYTRA: gliding=%b elytraEquipped=%b", gliding, elytra);
             return Optional.of(AbortReason.NO_ELYTRA);
         }
         Optional<String> conflict = activeConflict();
@@ -318,7 +332,21 @@ public class NukerElytraAssist extends Module {
             warning("Start blocked: conflicting module '%s' is active.", conflict.get());
             return Optional.of(AbortReason.CONFLICTING_MODULE);
         }
+        if (debug.get()) info("gate pass: gliding=%b elytra=%b", gliding, elytra);
         return Optional.empty();
+    }
+
+    private void pipelineLog(String message) {
+        if (debug.get()) info("[pipeline] %s", message);
+    }
+
+    private void detectorLog(String message) {
+        if (debug.get()) info("[detector] %s", message);
+    }
+
+    private void boostAtVector1Start() {
+        boolean launched = fireworkBoost.get() && silentFirework.boost();
+        if (debug.get()) info("firework: %s", launched ? "rocket launched" : "skipped (toggle off, not gliding or no rocket in hotbar)");
     }
 
     private void motion(Vec3d direction, double speedLimit) {
@@ -359,18 +387,31 @@ public class NukerElytraAssist extends Module {
         int pz = BlockPosI.floor(feet.z());
 
         if (cfg.safeFallDistance() > 0 && hasSolidBelow(level, px, py, pz, cfg.safeFallDistance())) {
-            if (debugTrace.get()) {
-                info("Safe drop: solid block below within %d blocks, skipping flight.", cfg.safeFallDistance());
+            if (debug.get()) {
+                info("[target] safe drop: solid block below within %d blocks, skipping flight.", cfg.safeFallDistance());
             }
             return Optional.empty();
         }
 
         TargetSurface above = scanUp(level, feet, cfg);
-        if (above != null) return Optional.of(above);
+        if (above != null) {
+            if (debug.get()) {
+                info("[target] ABOVE at (%d, %d, %d) topY=%.1f", above.pos().x(), above.pos().y(), above.pos().z(), above.topY());
+            }
+            return Optional.of(above);
+        }
 
         TargetSurface below = scanDown(level, feet, cfg);
-        if (below != null) return Optional.of(below);
+        if (below != null) {
+            if (debug.get()) {
+                info("[target] BELOW at (%d, %d, %d) topY=%.1f", below.pos().x(), below.pos().y(), below.pos().z(), below.topY());
+            }
+            return Optional.of(below);
+        }
 
+        if (debug.get()) {
+            info("[target] nothing found above (up to %d) or below (up to %d), aborting.", cfg.scanUpDistance(), cfg.scanDownDistance());
+        }
         return Optional.empty();
     }
 
@@ -475,10 +516,6 @@ public class NukerElytraAssist extends Module {
 
     private TargetSurface surface(BlockPosI at, TargetKind kind) {
         return new TargetSurface(at, at.y() + 1.0, true, kind);
-    }
-
-    private void boostAtVector1Start() {
-        if (fireworkBoost.get()) silentFirework.boost();
     }
 
     private Optional<String> activeConflict() {

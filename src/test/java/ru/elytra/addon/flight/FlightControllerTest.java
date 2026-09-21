@@ -17,6 +17,7 @@ class FlightControllerTest {
     private static final String DIMENSION = "minecraft:overworld";
 
     private final List<Vec3d> applied = new ArrayList<>();
+    private final List<String> pipeline = new ArrayList<>();
     private int diveCalls;
     private int recoverCalls;
     private int vector1StartCalls;
@@ -47,7 +48,7 @@ class FlightControllerTest {
         };
         TargetFinder finder = (feet, cfg) -> target;
         return new FlightController(gate, motion, finder, trace -> {
-        }, () -> vector1StartCalls++);
+        }, () -> vector1StartCalls++, pipeline::add);
     }
 
     private void advance(FlightController controller, int ticks, long startTime) {
@@ -119,6 +120,18 @@ class FlightControllerTest {
 
         assertEquals(FlightState.IDLE, controller.state());
         assertEquals(1, vector1StartCalls, "firework hook must fire exactly once at the start of V1");
+    }
+
+    @Test
+    void pipelineLogsStateTransitionsAndAborts() {
+        target = Optional.empty();
+        FlightController controller = controller();
+        controller.observe(observation(100));
+
+        advance(controller, 5, 100);
+
+        assertTrue(pipeline.stream().anyMatch(line -> line.contains("enter ARMED")), "must log observe->ARMED, got: " + pipeline);
+        assertTrue(pipeline.stream().anyMatch(line -> line.startsWith("abort reason=")), "must log the abort reason, got: " + pipeline);
     }
 
     @Test

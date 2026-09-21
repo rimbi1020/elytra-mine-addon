@@ -14,6 +14,7 @@ public final class FlightController {
     private final TargetFinder targetFinder;
     private final TraceSink traceSink;
     private final Runnable onVector1Start;
+    private final PipelineLog pipelineLog;
 
     private FlightState state = FlightState.IDLE;
     private AbortReason abortReason = AbortReason.NONE;
@@ -24,17 +25,19 @@ public final class FlightController {
     private long tick;
     private int stateTicks;
 
-    public FlightController(Gate gate, Motion motion, TargetFinder targetFinder, TraceSink traceSink, Runnable onVector1Start) {
+    public FlightController(Gate gate, Motion motion, TargetFinder targetFinder, TraceSink traceSink, Runnable onVector1Start, PipelineLog pipelineLog) {
         this.gate = gate;
         this.motion = motion;
         this.targetFinder = targetFinder;
         this.traceSink = traceSink;
         this.onVector1Start = onVector1Start;
+        this.pipelineLog = pipelineLog;
     }
 
     public void observe(BreakObservation observation) {
         if (state != FlightState.IDLE) return;
         this.source = observation;
+        pipelineLog.log(String.format("observe break=(%d,%d,%d) tick=%d source=%s", observation.pos().x(), observation.pos().y(), observation.pos().z(), observation.worldTime(), observation.source()));
         enter(FlightState.ARMED);
     }
 
@@ -125,6 +128,9 @@ public final class FlightController {
             abort(AbortReason.NO_TARGET, "degenerate plan");
             return;
         }
+        pipelineLog.log(String.format("target kind=%s pos=(%d,%d,%d) topY=%.1f p1=(%.2f,%.2f,%.2f)",
+            target.get().kind(), target.get().pos().x(), target.get().pos().y(), target.get().pos().z(),
+            target.get().topY(), plan.p1().x(), plan.p1().y(), plan.p1().z()));
         plan.begin();
         stateTicks = 0;
         enter(FlightState.VECTOR_1);
@@ -190,6 +196,7 @@ public final class FlightController {
     }
 
     private void abort(AbortReason reason, String note) {
+        pipelineLog.log("abort reason=" + reason + " note=" + note);
         abortReason = reason;
         lastNote = note;
         motion.recover();
@@ -202,6 +209,7 @@ public final class FlightController {
     private void enter(FlightState next) {
         state = next;
         stateTicks = 0;
+        pipelineLog.log("enter " + next);
     }
 
     private String phaseLabel() {
