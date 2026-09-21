@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "id": "elytra-addon",
+  "version": "${version}",
+  "name": "Elytra Kek Assist",
+  "description": "Reacts to confirmed block breaks under the player while KekNuker is active and runs a short two-vector elytra flight cycle.",
+  "authors": [
+    "Elytra Addon"
+  ],
+  "environment": "client",
+  "entrypoints": {
+    "meteor": [
+      "ru.elytra.addon.ElytraAddon"
+    ]
+  },
+  "mixins": [
+    "elytra-addon.mixins.json"
+  ],
+  "custom": {
+    "meteor-client:color": "89,216,232"
+  },
+  "depends": {
+    "java": ">=${jdk_version}",
+    "minecraft": "${minecraft_version}",
+    "meteor-client": "*"
+  }
+}

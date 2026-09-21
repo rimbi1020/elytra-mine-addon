@@ -1,0 +1,12 @@
+{
+  "required": true,
+  "package": "ru.elytra.addon.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [],
+  "client": [
+    "ClientPacketListenerMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}
