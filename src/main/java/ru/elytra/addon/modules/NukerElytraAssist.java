@@ -20,6 +20,7 @@ import net.minecraft.client.world.ClientWorld;
 import net.minecraft.entity.EquipmentSlot;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
+import net.minecraft.network.packet.c2s.play.ClientCommandC2SPacket;
 import net.minecraft.util.PlayerInput;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.util.math.Direction;
@@ -64,6 +65,13 @@ public class NukerElytraAssist extends Module {
     private final Setting<Boolean> triggerOnlyWhenKekNukerActive = sgGeneral.add(new BoolSetting.Builder()
         .name("trigger-only-when-kek-nuker-active")
         .description("Only react while the Musheor KekNuker module is active.")
+        .defaultValue(true)
+        .build()
+    );
+
+    private final Setting<Boolean> autoStartGlide = sgGeneral.add(new BoolSetting.Builder()
+        .name("auto-start-glide")
+        .description("Automatically jump and start elytra gliding when a confirmed break is observed while standing. Fireworks are only effective while gliding.")
         .defaultValue(true)
         .build()
     );
@@ -192,6 +200,7 @@ public class NukerElytraAssist extends Module {
     private float savedXRot;
     private float savedYRot;
     private boolean savedRotations;
+    private boolean glidePacketSent;
     private long lastTick;
 
     public NukerElytraAssist() {
@@ -291,6 +300,7 @@ public class NukerElytraAssist extends Module {
         Optional<BreakObservation> observation = detector.onBlockUpdate(level, player, event, level.getTime(), dimension(), scanRadius.get());
         if (observation.isEmpty()) return;
 
+        glidePacketSent = false;
         controller.observe(observation.get());
     }
 
@@ -323,10 +333,15 @@ public class NukerElytraAssist extends Module {
         }
         boolean gliding = mc.player.isGliding();
         boolean elytra = hasElytra();
-        if (!gliding || !elytra) {
-            if (debug.get()) info("gate reject NO_ELYTRA: gliding=%b elytraEquipped=%b", gliding, elytra);
+        if (!elytra) {
+            if (debug.get()) info("gate reject NO_ELYTRA: elytra not equipped");
             return Optional.of(AbortReason.NO_ELYTRA);
         }
+        if (!gliding) {
+            tryStartGlide();
+            return Optional.empty();
+        }
+        glidePacketSent = false;
         Optional<String> conflict = activeConflict();
         if (conflict.isPresent() && conflictPolicy.get() == ConflictPolicy.Block) {
             warning("Start blocked: conflicting module '%s' is active.", conflict.get());
@@ -334,6 +349,27 @@ public class NukerElytraAssist extends Module {
         }
         if (debug.get()) info("gate pass: gliding=%b elytra=%b", gliding, elytra);
         return Optional.empty();
+    }
+
+    private void tryStartGlide() {
+        if (!autoStartGlide.get()) return;
+        ClientPlayerEntity player = mc.player;
+        if (player == null || mc.world == null) return;
+        if (player.isGliding()) {
+            glidePacketSent = false;
+            return;
+        }
+        if (!hasElytra()) return;
+        if (player.isOnGround()) {
+            player.jump();
+            if (debug.get()) info("auto-glide: jumping to start taking off");
+            return;
+        }
+        if (player.getVelocity().y <= 0.0 && !glidePacketSent) {
+            glidePacketSent = true;
+            mc.getNetworkHandler().sendPacket(new ClientCommandC2SPacket(player, ClientCommandC2SPacket.Mode.START_FALL_FLYING));
+            if (debug.get()) info("auto-glide: START_FALL_FLYING sent");
+        }
     }
 
     private void pipelineLog(String message) {

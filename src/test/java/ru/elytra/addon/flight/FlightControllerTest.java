@@ -27,6 +27,7 @@ class FlightControllerTest {
     private boolean manualInput;
     private Vec3d playerPos = new Vec3d(0.5, 10.0, 0.5);
     private String playerDimension = DIMENSION;
+    private boolean fallFlying = true;
 
     private FlightController controller() {
         Gate gate = () -> gateResult == null ? Optional.empty() : Optional.of(gateResult);
@@ -60,7 +61,7 @@ class FlightControllerTest {
     }
 
     private PlayerState player(long time) {
-        return new PlayerState(time, playerPos, new Vec3d(0, 0, 0), false, true, 0,
+        return new PlayerState(time, playerPos, new Vec3d(0, 0, 0), false, fallFlying, 0,
             false, false, manualInput, true, playerDimension);
     }
 
@@ -120,6 +121,18 @@ class FlightControllerTest {
 
         assertEquals(FlightState.IDLE, controller.state());
         assertEquals(1, vector1StartCalls, "firework hook must fire exactly once at the start of V1");
+    }
+
+    @Test
+    void notGlidingStaysArmedUntilTimeout() {
+        fallFlying = false;
+        FlightController controller = controller();
+        controller.observe(observation(100));
+
+        advance(controller, FlightController.ARMED_MAX_TICKS + 3, 100);
+
+        assertEquals(FlightState.IDLE, controller.state());
+        assertEquals(AbortReason.NO_ELYTRA, controller.abortReason());
     }
 
     @Test

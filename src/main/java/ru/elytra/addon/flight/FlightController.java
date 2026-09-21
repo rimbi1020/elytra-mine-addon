@@ -8,6 +8,7 @@ import java.util.Optional;
 public final class FlightController {
     public static final int WAIT_SYNC_TICKS = 10;
     public static final int TARGET_SEARCH_TICKS = 20;
+    public static final int ARMED_MAX_TICKS = 12;
 
     private final Gate gate;
     private final Motion motion;
@@ -108,6 +109,12 @@ public final class FlightController {
         Optional<AbortReason> gateResult = gate.check();
         if (gateResult.isPresent()) {
             abort(gateResult.get(), "gate check failed");
+            return;
+        }
+        if (!lastPlayer.fallFlying()) {
+            if (stateTicks >= ARMED_MAX_TICKS) {
+                abort(AbortReason.NO_ELYTRA, "glide did not start in time");
+            }
             return;
         }
         enter(FlightState.TARGET);
