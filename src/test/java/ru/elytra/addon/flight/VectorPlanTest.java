@@ -38,6 +38,19 @@ class VectorPlanTest {
     }
 
     @Test
+    void belowTargetAimsV1Downward() {
+        TargetSurface target = new TargetSurface(new BlockPosI(0, 5, 0), 6.0, true, TargetKind.BELOW);
+        VectorPlan plan = VectorPlan.create(new Vec3d(0.5, 20.0, 0.5), target, 3, 3, 2);
+
+        assertTrue(plan.v1().y() < 0);
+        assertFalse(plan.v1().allZero());
+        assertEquals(0.0, plan.v2().x(), 1.0E-6);
+        assertEquals(-1.0, plan.v2().y(), 1.0E-6);
+        assertEquals(0.0, plan.v2().z(), 1.0E-6);
+        assertFalse(plan.isDegenerate());
+    }
+
+    @Test
     void degenerateWhenP1EqualsP0() {
         TargetSurface target = new TargetSurface(new BlockPosI(0, 0, 0), 1.0, true);
         VectorPlan plan = VectorPlan.create(new Vec3d(0.5, 1.0, 0.5), target, 0, 3, 2);

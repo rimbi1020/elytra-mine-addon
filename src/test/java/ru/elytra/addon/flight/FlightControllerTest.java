@@ -13,12 +13,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class FlightControllerTest {
     private static final FlightConfig CONFIG = new FlightConfig(3, 3, 2, 0.2, 8, true);
-    private static final ScanConfig SCAN = new ScanConfig(3, 16, 0, true);
+    private static final ScanConfig SCAN = new ScanConfig(3, 30, 30, 0, true, 10);
     private static final String DIMENSION = "minecraft:overworld";
 
     private final List<Vec3d> applied = new ArrayList<>();
     private int diveCalls;
     private int recoverCalls;
+    private int vector1StartCalls;
 
     private Optional<TargetSurface> target = Optional.of(new TargetSurface(new BlockPosI(0, 10, 0), 11.0, true));
     private AbortReason gateResult;
@@ -46,7 +47,7 @@ class FlightControllerTest {
         };
         TargetFinder finder = (feet, cfg) -> target;
         return new FlightController(gate, motion, finder, trace -> {
-        });
+        }, () -> vector1StartCalls++);
     }
 
     private void advance(FlightController controller, int ticks, long startTime) {
@@ -107,6 +108,17 @@ class FlightControllerTest {
 
         assertEquals(FlightState.IDLE, controller.state());
         assertEquals(AbortReason.MANUAL_INPUT, controller.abortReason());
+    }
+
+    @Test
+    void vector1StartHookFiresOncePerCycle() {
+        FlightController controller = controller();
+        controller.observe(observation(100));
+
+        advance(controller, 30, 100);
+
+        assertEquals(FlightState.IDLE, controller.state());
+        assertEquals(1, vector1StartCalls, "firework hook must fire exactly once at the start of V1");
     }
 
     @Test

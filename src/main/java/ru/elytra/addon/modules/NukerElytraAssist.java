@@ -37,10 +37,12 @@ import ru.elytra.addon.flight.FlightController;
 import ru.elytra.addon.flight.Motion;
 import ru.elytra.addon.flight.PlayerState;
 import ru.elytra.addon.flight.ScanConfig;
+import ru.elytra.addon.flight.TargetKind;
 import ru.elytra.addon.flight.TargetSurface;
 import ru.elytra.addon.flight.Vec3d;
 import ru.elytra.addon.integration.MeteorModuleBridge;
 import ru.elytra.addon.integration.MusheorBridge;
+import ru.elytra.addon.integration.SilentFirework;
 
 import java.util.List;
 import java.util.Optional;
@@ -77,9 +79,25 @@ public class NukerElytraAssist extends Module {
 
     private final Setting<Integer> scanUpDistance = sgTarget.add(new IntSetting.Builder()
         .name("scan-up-distance")
-        .description("Max distance to scan upward for a target block.")
-        .defaultValue(16)
-        .range(8, 32)
+        .description("Max distance to scan upward for a target block. If nothing is found above within this range, the addon searches for a surface below the player.")
+        .defaultValue(30)
+        .range(8, 64)
+        .build()
+    );
+
+    private final Setting<Integer> scanDownDistance = sgTarget.add(new IntSetting.Builder()
+        .name("scan-down-distance")
+        .description("Max distance to scan downward for a target block when no ceiling was found above.")
+        .defaultValue(30)
+        .range(8, 64)
+        .build()
+    );
+
+    private final Setting<Integer> safeFallDistance = sgTarget.add(new IntSetting.Builder()
+        .name("safe-fall-distance")
+        .description("If a solid block exists directly below the player within this distance, skip the flight cycle and just fall. 0 disables the check.")
+        .defaultValue(10)
+        .range(0, 20)
         .build()
     );
 
@@ -98,8 +116,14 @@ public class NukerElytraAssist extends Module {
         .build()
     );
 
+    private final Setting<Boolean> fireworkBoost = sgVector.add(new BoolSetting.Builder()
+        .name("firework-boost")
+        .description("Silently use a firework rocket from the hotbar at the start of the first vector so the server sees a legitimate speed source (prevents Grim kicks).")
+        .defaultValue(true)
+        .build()
+    );
+
     private final Setting<Integer> vector1Ticks = sgVector.add(new IntSetting.Builder()
-        .name("vector-1-ticks")
         .description("Number of ticks the first vector is applied.")
         .defaultValue(3)
         .range(2, 8)
@@ -155,6 +179,7 @@ public class NukerElytraAssist extends Module {
     private final MeteorModuleBridge moduleBridge = new MeteorModuleBridge();
     private final MusheorBridge musheorBridge = new MusheorBridge(moduleBridge);
     private final BlockBreakDetector detector = new BlockBreakDetector();
+    private final SilentFirework silentFirework = new SilentFirework();
     private final FlightController controller;
 
     private float savedXRot;
@@ -183,7 +208,8 @@ public class NukerElytraAssist extends Module {
                 }
             },
             this::targetFinder,
-            this::traceSink
+            this::traceSink,
+            this::boostAtVector1Start
         );
     }
 
@@ -230,8 +256,10 @@ public class NukerElytraAssist extends Module {
         ScanConfig scan = new ScanConfig(
             targetHeightOffset.get(),
             scanUpDistance.get(),
+            scanDownDistance.get(),
             scanRadius.get(),
-            targetStandableOnly.get()
+            targetStandableOnly.get(),
+            safeFallDistance.get()
         );
 
         controller.tick(state, flight, scan);
@@ -330,12 +358,33 @@ public class NukerElytraAssist extends Module {
         int py = BlockPosI.floor(feet.y());
         int pz = BlockPosI.floor(feet.z());
 
-        for (int y = py; y <= py + cfg.scanUpDistance(); y++) {
-            BlockPosI at = new BlockPosI(px, y, pz);
-            if (isStandable(level, at, cfg)) return Optional.of(surface(at));
+        if (cfg.safeFallDistance() > 0 && hasSolidBelow(level, px, py, pz, cfg.safeFallDistance())) {
+            if (debugTrace.get()) {
+                info("Safe drop: solid block below within %d blocks, skipping flight.", cfg.safeFallDistance());
+            }
+            return Optional.empty();
         }
 
-        if (cfg.scanRadius() <= 0) return Optional.empty();
+        TargetSurface above = scanUp(level, feet, cfg);
+        if (above != null) return Optional.of(above);
+
+        TargetSurface below = scanDown(level, feet, cfg);
+        if (below != null) return Optional.of(below);
+
+        return Optional.empty();
+    }
+
+    private TargetSurface scanUp(ClientWorld level, Vec3d feet, ScanConfig cfg) {
+        int px = BlockPosI.floor(feet.x());
+        int py = BlockPosI.floor(feet.y());
+        int pz = BlockPosI.floor(feet.z());
+
+        for (int y = py; y <= py + cfg.scanUpDistance(); y++) {
+            BlockPosI at = new BlockPosI(px, y, pz);
+            if (isStandable(level, at, cfg)) return surface(at, TargetKind.ABOVE);
+        }
+
+        if (cfg.scanRadius() <= 0) return null;
 
         TargetSurface best = null;
         double bestDistance = 0;
@@ -346,7 +395,7 @@ public class NukerElytraAssist extends Module {
                     for (int y = py; y <= py + cfg.scanUpDistance(); y++) {
                         BlockPosI at = new BlockPosI(px + dx, y, pz + dz);
                         if (!isStandable(level, at, cfg)) continue;
-                        TargetSurface candidate = surface(at);
+                        TargetSurface candidate = surface(at, TargetKind.ABOVE);
                         double distance = candidateDistance(feet, candidate);
                         if (best == null || distance < bestDistance) {
                             best = candidate;
@@ -356,7 +405,55 @@ public class NukerElytraAssist extends Module {
                 }
             }
         }
-        return Optional.ofNullable(best);
+        return best;
+    }
+
+    private TargetSurface scanDown(ClientWorld level, Vec3d feet, ScanConfig cfg) {
+        int px = BlockPosI.floor(feet.x());
+        int py = BlockPosI.floor(feet.y());
+        int pz = BlockPosI.floor(feet.z());
+
+        for (int y = py - 1; y >= py - cfg.scanDownDistance(); y--) {
+            BlockPosI at = new BlockPosI(px, y, pz);
+            if (isStandable(level, at, cfg)) return surface(at, TargetKind.BELOW);
+        }
+
+        if (cfg.scanRadius() <= 0) return null;
+
+        TargetSurface best = null;
+        double bestDistance = 0;
+        for (int r = 1; r <= cfg.scanRadius(); r++) {
+            for (int dz = -r; dz <= r; dz++) {
+                for (int dx = -r; dx <= r; dx++) {
+                    if (Math.max(Math.abs(dx), Math.abs(dz)) != r) continue;
+                    for (int y = py - 1; y >= py - cfg.scanDownDistance(); y--) {
+                        BlockPosI at = new BlockPosI(px + dx, y, pz + dz);
+                        if (!isStandable(level, at, cfg)) continue;
+                        TargetSurface candidate = surface(at, TargetKind.BELOW);
+                        double distance = candidateDistance(feet, candidate);
+                        if (best == null || distance < bestDistance) {
+                            best = candidate;
+                            bestDistance = distance;
+                        }
+                    }
+                }
+            }
+        }
+        return best;
+    }
+
+    private boolean hasSolidBelow(ClientWorld level, int px, int py, int pz, int maxDistance) {
+        for (int y = py - 1; y >= py - maxDistance; y--) {
+            if (hasCollision(level, new BlockPosI(px, y, pz))) return true;
+        }
+        return false;
+    }
+
+    private boolean hasCollision(ClientWorld level, BlockPosI at) {
+        BlockPos pos = new BlockPos(at.x(), at.y(), at.z());
+        BlockState state = level.getBlockState(pos);
+        if (state.isAir()) return false;
+        return !state.getCollisionShape(level, pos).isEmpty();
     }
 
     private boolean isStandable(ClientWorld level, BlockPosI at, ScanConfig cfg) {
@@ -376,8 +473,12 @@ public class NukerElytraAssist extends Module {
         return dx * dx + dy * dy + dz * dz;
     }
 
-    private TargetSurface surface(BlockPosI at) {
-        return new TargetSurface(at, at.y() + 1.0, true);
+    private TargetSurface surface(BlockPosI at, TargetKind kind) {
+        return new TargetSurface(at, at.y() + 1.0, true, kind);
+    }
+
+    private void boostAtVector1Start() {
+        if (fireworkBoost.get()) silentFirework.boost();
     }
 
     private Optional<String> activeConflict() {

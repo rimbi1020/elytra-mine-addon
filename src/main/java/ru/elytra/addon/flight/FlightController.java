@@ -13,6 +13,7 @@ public final class FlightController {
     private final Motion motion;
     private final TargetFinder targetFinder;
     private final TraceSink traceSink;
+    private final Runnable onVector1Start;
 
     private FlightState state = FlightState.IDLE;
     private AbortReason abortReason = AbortReason.NONE;
@@ -23,11 +24,12 @@ public final class FlightController {
     private long tick;
     private int stateTicks;
 
-    public FlightController(Gate gate, Motion motion, TargetFinder targetFinder, TraceSink traceSink) {
+    public FlightController(Gate gate, Motion motion, TargetFinder targetFinder, TraceSink traceSink, Runnable onVector1Start) {
         this.gate = gate;
         this.motion = motion;
         this.targetFinder = targetFinder;
         this.traceSink = traceSink;
+        this.onVector1Start = onVector1Start;
     }
 
     public void observe(BreakObservation observation) {
@@ -115,7 +117,7 @@ public final class FlightController {
         }
         Optional<TargetSurface> target = targetFinder.find(lastPlayer.pos(), scan);
         if (target.isEmpty()) {
-            abort(AbortReason.NO_TARGET, "no standable surface found above");
+            abort(AbortReason.NO_TARGET, "no target found (safe drop or nothing above/below)");
             return;
         }
         plan = VectorPlan.create(lastPlayer.pos(), target.get(), flight.offset(), flight.vector1Ticks(), flight.vector2Ticks());
@@ -129,6 +131,7 @@ public final class FlightController {
     }
 
     private void vector1Tick(FlightConfig flight) {
+        if (plan.inV1() && plan.tick() == 0) onVector1Start.run();
         if (flight.abortOnManualInput() && lastPlayer.manualInput()) {
             abort(AbortReason.MANUAL_INPUT, "manual input during V1");
             return;
